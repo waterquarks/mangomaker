@@ -21,6 +21,7 @@ import {BN} from "bn.js";
 import child_process from "child_process";
 import {getFeeRates, getFeeTier, Market} from "@project-serum/serum";
 import {range, zip} from "lodash";
+import {MangoRiskCheck, ViolationBehaviour} from "mango_risk_check";
 
 const main = async () => {
     const {
@@ -75,6 +76,8 @@ const main = async () => {
         )
     ])
 
+    // The last updated timestamp for the cached token oracle price is logged
+    // to check whether it hasn't updated in too long of a while
     let [tokenPrice, tokenPriceLastUpdated] = [
         mangoGroup.cachePriceToUi(
             mangoCache.getPrice(mangoGroup.getTokenIndex(token.mintKey)), mangoGroup.getTokenIndex(token.mintKey)
@@ -91,6 +94,8 @@ const main = async () => {
         ]
     })
 
+    // Transactions require a recent blockHash in order to be signed - we poll this
+    // regularly in a separate thread to prevent the extra RPC call slowing down quotes
     let recentBlockhash = await connection.getLatestBlockhash('finalized')
 
     async function pollRecentBlockhash() { recentBlockhash = await connection.getLatestBlockhash('finalized') }
@@ -148,6 +153,34 @@ const main = async () => {
         }
     }))
 
+    const riskChecker = new MangoRiskCheck({
+        connection: connection,
+        // @ts-ignore
+        mangoAccount: mangoAccount,
+        // @ts-ignore
+        mangoClient: mangoClient,
+        // @ts-ignore
+        mangoGroup: mangoGroup,
+        owner: payer
+    })
+
+    if (!(await riskChecker.getRiskAccount(perpMarketConfig))) {
+        console.log('Risk check account not found, creating one...')
+
+        await riskChecker.initializeRiskAccount(perpMarketConfig)
+
+        console.log('Risk check account created!')
+    }
+
+    await Promise.all([
+        riskChecker.setMaxOpenOrders(perpMarketConfig, 2),
+        // @ts-ignore
+        riskChecker.setMaxLongExposure(perpMarketConfig, perpMarket,10),
+        // @ts-ignore
+        riskChecker.setMaxShortExposure(perpMarketConfig, perpMarket, 10),
+        riskChecker.setViolationBehaviour(perpMarketConfig, ViolationBehaviour.CancelIncreasingOrders)
+    ])
+
     const quote = async () => {
         const spread = tokenPrice! * 0.001
 
@@ -160,11 +193,20 @@ const main = async () => {
             feePayer: payer.publicKey
         })
 
-        const orderId = new BN(Date.now())
+        const timestamp = new BN(Date.now())
+
+        // Use different order IDs for both sides of the quote - inconsistent state
+        // issues on the program side might happen if we tried to cancel order by ID
+        // otherwise.
+        const [bidId, askId] = [timestamp.add(new BN(1)), timestamp]
 
         const blockHeight = await connection.getSlot('finalized')
 
         const blockTime = await connection.getBlockTime(blockHeight)
+
+        // ^ When using Time in Force orders, it's important to use *cluster time*
+        // as it might drift from actual UNIX time every once and then, effectively
+        // being different to what you'd get using Date.now().
 
         if (blockTime === null) {
             console.log('Failed to fetch block time')
@@ -172,7 +214,7 @@ const main = async () => {
             return
         }
 
-        const expiryTimestamp = new BN(blockTime + 10)
+        const expiryTimestamp = new BN(blockTime + 30)
 
         tx.add(
             makeCancelAllPerpOrdersInstruction(
@@ -199,7 +241,7 @@ const main = async () => {
                 new BN(bidPrice),
                 new BN(bidSize),
                 I64_MAX_BN,
-                orderId,
+                bidId,
                 'buy',
                 new BN(255),
                 'postOnlySlide',
@@ -221,13 +263,18 @@ const main = async () => {
                 new BN(askPrice),
                 new BN(askSize),
                 I64_MAX_BN,
-                orderId,
+                askId,
                 'sell',
                 new BN(255),
                 'postOnlySlide',
                 false,
                 undefined,
                  expiryTimestamp
+            ),
+            riskChecker.makeCheckRiskInstruction(
+                perpMarketConfig,
+                // @ts-ignore
+                perpMarket
             )
         )
 
