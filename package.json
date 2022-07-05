@@ -7,6 +7,7 @@
     "@blockworks-foundation/mango-client": "^3.6.5",
     "@types/bn.js": "^5.1.0",
     "bn.js": "^5.2.1",
+    "mango_risk_check": "^1.2.1",
     "sqlite": "^4.1.1",
     "sqlite3": "^5.0.8",
     "ts-node": "^10.8.1",

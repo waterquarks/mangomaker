@@ -2,6 +2,22 @@ import sqlite3 from 'sqlite3'
 import { open } from 'sqlite'
 import WebSocket from 'ws'
 
+function* spot() {
+    const ws = new WebSocket('ws://mangolorians.com:8010/v1/ws')
+
+    ws.onopen = (event) => {
+        ws.send(JSON.stringify({
+            'op': 'subscribe',
+            'channel': 'level3',
+            'markets': ['SOL-PERP']
+        }))
+    }
+
+    ws.onmessage = (event) => {
+        console.log(JSON.parse(event.data.toString()))
+    }
+}
+
 const main = async () => {
     const db = await open({filename: './app.db', driver: sqlite3.Database})
 

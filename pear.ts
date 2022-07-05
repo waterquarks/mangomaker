@@ -1,15 +1,22 @@
 import {
     Config,
-    getPerpMarketByBaseSymbol, getSpotMarketByBaseSymbol,
+    getPerpMarketByBaseSymbol,
+    getSpotMarketByBaseSymbol,
     getTokenBySymbol,
     I64_MAX_BN,
     makeCancelAllPerpOrdersInstruction,
-    makePlacePerpOrder2Instruction, makePlaceSpotOrder2Instruction, MangoAccount,
-    MangoClient, MangoGroup, nativeToUi, Payer, QUOTE_INDEX, ZERO_BN
+    makePlacePerpOrder2Instruction,
+    makePlaceSpotOrder2Instruction,
+    MangoAccount,
+    MangoClient,
+    MangoGroup,
+    nativeToUi,
+    Payer,
+    QUOTE_INDEX,
+    ZERO_BN
 } from "@blockworks-foundation/mango-client";
 import {Connection, Keypair, PublicKey, Transaction} from "@solana/web3.js";
 import fs from "fs";
-import os from "os";
 import {BN} from "bn.js";
 import child_process from "child_process";
 import {getFeeRates, getFeeTier, Market} from "@project-serum/serum";
@@ -20,7 +27,7 @@ const main = async () => {
         KEYPAIR_PATH,
         MANGO_GROUP,
         MANGO_ACCOUNT,
-        MARKET
+        SYMBOL
     } = process.env
 
     const config = Config.ids()
@@ -33,79 +40,95 @@ const main = async () => {
         return
     }
 
-    const connection = new Connection(Config.ids().cluster_urls[mangoGroupConfig.cluster], 'processed')
+    const [token, perpMarketConfig, spotMarketConfig] = [
+        getTokenBySymbol(mangoGroupConfig, SYMBOL!),
+        getPerpMarketByBaseSymbol(mangoGroupConfig, SYMBOL!),
+        getSpotMarketByBaseSymbol(mangoGroupConfig, SYMBOL!)
+    ]
+
+    if (!token || !perpMarketConfig || !spotMarketConfig) {
+        console.log(`token, perpMarketConfig or spotMarketConfig by symbol ${SYMBOL!} not found`)
+
+        return
+    }
+
+    const connection = new Connection(config.cluster_urls[mangoGroupConfig.cluster], 'processed')
 
     const mangoClient = new MangoClient(connection, mangoGroupConfig.mangoProgramId)
 
     const mangoGroup = await mangoClient.getMangoGroup(mangoGroupConfig.publicKey)
 
-    const mangoCache = await mangoGroup.loadCache(connection)
+    const [mangoCache, rootBanks, perpMarket, spotMarket] = await Promise.all([
+        mangoGroup.loadCache(connection),
+        mangoGroup.loadRootBanks(connection),
+        mangoGroup.loadPerpMarket(
+            connection,
+            perpMarketConfig.marketIndex,
+            perpMarketConfig.baseDecimals,
+            perpMarketConfig.quoteDecimals
+        ),
+        Market.load(
+            connection,
+            spotMarketConfig.publicKey,
+            undefined,
+            mangoGroupConfig.serumProgramId
+        )
+    ])
 
-    const rootBanks = await mangoGroup.loadRootBanks(connection)
+    let [tokenPrice, tokenPriceLastUpdated] = [
+        mangoGroup.cachePriceToUi(
+            mangoCache.getPrice(mangoGroup.getTokenIndex(token.mintKey)), mangoGroup.getTokenIndex(token.mintKey)
+        ),
+        new Date()
+    ]
 
-    const payer = Keypair.fromSecretKey(
-        new Uint8Array(JSON.parse(fs.readFileSync(KEYPAIR_PATH || os.homedir() + '/.config/solana/id.json', 'utf-8')))
-    )
+    mangoGroup.onCacheChange(connection, (mangoCache) => {
+        [tokenPrice, tokenPriceLastUpdated] = [
+            mangoGroup.cachePriceToUi(
+                mangoCache.getPrice(mangoGroup.getTokenIndex(token.mintKey)), mangoGroup.getTokenIndex(token.mintKey)
+            ),
+            new Date()
+        ]
+    })
+
+    let recentBlockhash = await connection.getLatestBlockhash('finalized')
+
+    async function pollRecentBlockhash() { recentBlockhash = await connection.getLatestBlockhash('finalized') }
+
+    setInterval(pollRecentBlockhash, 5000)
+
+    const payer = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(KEYPAIR_PATH!, 'utf-8'))))
 
     const mangoAccount = await mangoClient.getMangoAccount(new PublicKey(MANGO_ACCOUNT!), mangoGroup.dexProgramId)
 
-    const token = getTokenBySymbol(mangoGroupConfig, 'SOL')
-
-    let tokenPrice = mangoGroup.cachePriceToUi(
-        mangoCache.getPrice(mangoGroup.getTokenIndex(token.mintKey)), mangoGroup.getTokenIndex(token.mintKey)
-    )
-
-    mangoGroup.onCacheChange(connection, (mangoCache) => {
-        tokenPrice = mangoGroup.cachePriceToUi(
-            mangoCache.getPrice(mangoGroup.getTokenIndex(token.mintKey)), mangoGroup.getTokenIndex(token.mintKey)
-        )
-    })
-
-    const perpMarketConfig = getPerpMarketByBaseSymbol(mangoGroupConfig, token.symbol)
-
-    if (!perpMarketConfig) {
-        return
-    }
-
-    const perpMarket = await mangoGroup.loadPerpMarket(
-        connection,
-        perpMarketConfig.marketIndex,
-        perpMarketConfig.baseDecimals,
-        perpMarketConfig.quoteDecimals
-    )
-
-    const spotMarketConfig = getSpotMarketByBaseSymbol(mangoGroupConfig, token.symbol)
-
-    if (!spotMarketConfig) {
-        return
-    }
-
-    const spotMarket = await Market.load(
-        connection,
-        spotMarketConfig.publicKey,
-        undefined,
-        mangoGroupConfig.serumProgramId
-    )
-
-    const listener = child_process.fork('./listen')
+    const listener = child_process.fork('./listen_to_orderbook')
 
     listener.on('message', ( async message => {
-        // @ts-ignore
-        const { side, price, size } = message
+        const { side, price, size } = JSON.parse(message.toString())
 
         // @ts-ignore
         const counterside = { buy: 'sell', sell: 'buy' }[side]
 
         console.log(`Got ${side} hit for ${size} @ $${price}, hedging on ${counterside}...`)
 
-        const latestBlockhash = await connection.getLatestBlockhash('finalized')
-
         const tx = new Transaction({
-            recentBlockhash: latestBlockhash.blockhash,
+            recentBlockhash: recentBlockhash.blockhash,
             feePayer: payer.publicKey
         })
 
-        const instruction = await createSpotOrder2Instruction(mangoClient, mangoGroup, mangoAccount, spotMarket, payer, counterside, price, size, 'ioc', undefined, true)
+        const instruction = await createSpotOrder2Instruction(
+            mangoClient,
+            mangoGroup,
+            mangoAccount,
+            spotMarket,
+            payer,
+            counterside,
+            price,
+            size,
+            'ioc',
+            undefined,
+            true
+        )
 
         tx.add(instruction!)
 
@@ -116,7 +139,7 @@ const main = async () => {
         try {
             const response = await mangoClient.sendSignedTransaction({
                 signedTransaction: tx,
-                signedAtBlock: latestBlockhash,
+                signedAtBlock: recentBlockhash,
             });
 
             console.log('hedge::response', meta, response);
@@ -132,14 +155,24 @@ const main = async () => {
 
         const [askPrice, askSize] = perpMarket.uiToNativePriceQuantity(tokenPrice! + spread, 10)
 
-        const latestBlockhash = await connection.getLatestBlockhash('finalized')
-
         const tx = new Transaction({
-            recentBlockhash: latestBlockhash.blockhash,
+            recentBlockhash: recentBlockhash.blockhash,
             feePayer: payer.publicKey
         })
 
         const orderId = new BN(Date.now())
+
+        const blockHeight = await connection.getSlot('finalized')
+
+        const blockTime = await connection.getBlockTime(blockHeight)
+
+        if (blockTime === null) {
+            console.log('Failed to fetch block time')
+
+            return
+        }
+
+        const expiryTimestamp = new BN(blockTime + 10)
 
         tx.add(
             makeCancelAllPerpOrdersInstruction(
@@ -168,8 +201,11 @@ const main = async () => {
                 I64_MAX_BN,
                 orderId,
                 'buy',
-                new BN(250),
-                'postOnlySlide'
+                new BN(255),
+                'postOnlySlide',
+                false,
+                undefined,
+                expiryTimestamp
             ),
             makePlacePerpOrder2Instruction(
                 mangoGroupConfig.mangoProgramId,
@@ -187,8 +223,11 @@ const main = async () => {
                 I64_MAX_BN,
                 orderId,
                 'sell',
-                new BN(250),
-                'postOnlySlide'
+                new BN(255),
+                'postOnlySlide',
+                false,
+                undefined,
+                 expiryTimestamp
             )
         )
 
@@ -199,7 +238,7 @@ const main = async () => {
         try {
             const response = await mangoClient.sendSignedTransaction({
                 signedTransaction: tx,
-                signedAtBlock: latestBlockhash,
+                signedAtBlock: recentBlockhash,
             });
 
             console.log('quote::response', meta, response);
