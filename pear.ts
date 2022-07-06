@@ -22,6 +22,7 @@ import child_process from "child_process";
 import {getFeeRates, getFeeTier, Market} from "@project-serum/serum";
 import {range, zip} from "lodash";
 import {MangoRiskCheck, ViolationBehaviour} from "mango_risk_check";
+import WebSocket from "ws";
 
 const main = async () => {
     const {
@@ -98,7 +99,17 @@ const main = async () => {
     // regularly in a separate thread to prevent the extra RPC call slowing down quotes
     let recentBlockhash = await connection.getLatestBlockhash('finalized')
 
-    async function pollRecentBlockhash() { recentBlockhash = await connection.getLatestBlockhash('finalized') }
+    let blockHeight = await connection.getSlot('finalized')
+
+    let blockTime = await connection.getBlockTime(blockHeight)
+
+    async function pollRecentBlockhash() {
+        recentBlockhash = await connection.getLatestBlockhash('finalized')
+
+        blockHeight = await connection.getSlot('finalized')
+
+        blockTime = await connection.getBlockTime(blockHeight)
+    }
 
     setInterval(pollRecentBlockhash, 5000)
 
@@ -106,10 +117,28 @@ const main = async () => {
 
     const mangoAccount = await mangoClient.getMangoAccount(new PublicKey(MANGO_ACCOUNT!), mangoGroup.dexProgramId)
 
-    const listener = child_process.fork('./listen_to_orderbook')
+    const ws = new WebSocket('ws://localhost:8010/v1/ws')
 
-    listener.on('message', ( async message => {
-        const { side, price, size } = JSON.parse(message.toString())
+    ws.onopen = (event) => {
+        ws.send(JSON.stringify({
+            'op': 'subscribe',
+            'channel': 'level3',
+            'markets': ['SOL-PERP']
+        }))
+    }
+
+    ws.onmessage = async (event) => {
+        const data = JSON.parse(event.data.toString())
+
+        const { type, maker, account } = data
+
+        const hit = type === 'fill' && maker && account === MANGO_ACCOUNT
+
+        if (!hit) {
+            return
+        }
+
+        const { side, price, size } = data
 
         // @ts-ignore
         const counterside = { buy: 'sell', sell: 'buy' }[side]
@@ -151,7 +180,7 @@ const main = async () => {
         } catch (error) {
             console.log('hedge::error', meta, error);
         }
-    }))
+    }
 
     const riskChecker = new MangoRiskCheck({
         connection: connection,
@@ -175,18 +204,18 @@ const main = async () => {
     await Promise.all([
         riskChecker.setMaxOpenOrders(perpMarketConfig, 2),
         // @ts-ignore
-        riskChecker.setMaxLongExposure(perpMarketConfig, perpMarket,10),
+        riskChecker.setMaxLongExposure(perpMarketConfig, perpMarket,50),
         // @ts-ignore
-        riskChecker.setMaxShortExposure(perpMarketConfig, perpMarket, 10),
+        riskChecker.setMaxShortExposure(perpMarketConfig, perpMarket, 50),
         riskChecker.setViolationBehaviour(perpMarketConfig, ViolationBehaviour.CancelIncreasingOrders)
     ])
 
     const quote = async () => {
         const spread = tokenPrice! * 0.001
 
-        const [bidPrice, bidSize] = perpMarket.uiToNativePriceQuantity(tokenPrice! - spread, 10)
+        const [bidPrice, bidSize] = perpMarket.uiToNativePriceQuantity(tokenPrice! - spread, Math.floor(Math.random() * 10))
 
-        const [askPrice, askSize] = perpMarket.uiToNativePriceQuantity(tokenPrice! + spread, 10)
+        const [askPrice, askSize] = perpMarket.uiToNativePriceQuantity(tokenPrice! + spread, Math.floor(Math.random() * 10))
 
         const tx = new Transaction({
             recentBlockhash: recentBlockhash.blockhash,
@@ -199,10 +228,6 @@ const main = async () => {
         // issues on the program side might happen if we tried to cancel order by ID
         // otherwise.
         const [bidId, askId] = [timestamp.add(new BN(1)), timestamp]
-
-        const blockHeight = await connection.getSlot('finalized')
-
-        const blockTime = await connection.getBlockTime(blockHeight)
 
         // ^ When using Time in Force orders, it's important to use *cluster time*
         // as it might drift from actual UNIX time every once and then, effectively
