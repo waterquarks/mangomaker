@@ -5,8 +5,10 @@
   "license": "MIT",
   "dependencies": {
     "@blockworks-foundation/mango-client": "^3.6.5",
+    "@project-serum/serum": "^0.13.65",
     "@types/bn.js": "^5.1.0",
     "bn.js": "^5.2.1",
+    "lodash": "^4.17.21",
     "mango_risk_check": "^1.2.1",
     "sqlite": "^4.1.1",
     "sqlite3": "^5.0.8",
