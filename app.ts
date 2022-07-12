@@ -217,7 +217,24 @@ const main = async () => {
     connection.onAccountChange(mangoAccountPk, async (accountInfo, context) => {
         const mangoAccount = new MangoAccount(mangoAccountPk, MangoAccountLayout.decode(accountInfo.data))
 
+        const basePosition = mangoAccount.perpAccounts[perpMarketConfig.marketIndex].getBasePositionUi(perpMarket)
+
         const perpMarketEventQueue = await perpMarket.loadEventQueue(connection)
+
+        const unprocessedBasePosition = perpMarketEventQueue.events
+            .filter(event => event.fill !== undefined)
+            .map(event => perpMarket.parseFillEvent(event.fill))
+            .filter(fill => fill.maker.equals(mangoAccount.publicKey) && !fill.makerOut)
+            .reduce((accumulator, fill) => {
+                switch (fill.takerSide) {
+                    case "buy":
+                        return accumulator - fill.quantity
+                    case "sell":
+                        return accumulator + fill.quantity
+                }
+            }, 0)
+
+        const completeBasePosition = basePosition + unprocessedBasePosition
 
         const tokenDeposit = mangoAccount.getUiDeposit(mangoCache.rootBankCache[tokenIndex], mangoGroup, tokenIndex)
 
@@ -234,6 +251,7 @@ const main = async () => {
         console.table([{
             slot: context.slot,
             tokenPrice,
+            completeBasePosition,
             tokenSpotBalance
         }])
     }, 'processed')
