@@ -4,7 +4,7 @@ import {
     getSpotMarketByBaseSymbol,
     getTokenBySymbol,
     I64_MAX_BN, I80F48,
-    makeCancelAllPerpOrdersInstruction,
+    makeCancelAllPerpOrdersInstruction, makeCreateSpotOpenOrdersInstruction,
     makePlacePerpOrder2Instruction,
     makePlaceSpotOrder2Instruction,
     MangoAccount, MangoAccountLayout,
@@ -119,6 +119,69 @@ const main = async () => {
     const mangoAccountPk = new PublicKey(MANGO_ACCOUNT!)
 
     const mangoAccount = await mangoClient.getMangoAccount(mangoAccountPk, mangoGroup.dexProgramId)
+
+    const spotMarketIndex = mangoGroup.getSpotMarketIndex(spotMarket.publicKey)
+
+    if (!mangoAccount.spotOpenOrdersAccounts[spotMarketIndex]) {
+        /*
+        Unlike in perp markets, where orders require only a Mango account, Serum
+        markets supported by Mango require an "open orders" account to serve as
+        an intermediary. One open orders account is needed for each spot market.
+        */
+
+        console.log('Open orders account not found, creating one...')
+
+        const spotMarketIndexBN = new BN(spotMarketIndex)
+
+        const [openOrdersPk] = await PublicKey.findProgramAddress(
+            [
+                mangoAccount.publicKey.toBytes(),
+                spotMarketIndexBN.toArrayLike(Buffer, 'le', 8),
+                new Buffer('OpenOrders', 'utf-8'),
+            ],
+            mangoClient.programId,
+        )
+
+        const createSpotOpenOrdersInstruction = makeCreateSpotOpenOrdersInstruction(
+            mangoClient.programId,
+            mangoGroup.publicKey,
+            mangoAccount.publicKey,
+            payer.publicKey,
+            mangoGroup.dexProgramId,
+            openOrdersPk,
+            spotMarket.publicKey,
+            mangoGroup.signerKey
+        )
+
+        const latestBlockhash = await connection.getLatestBlockhash('finalized')
+
+        const tx = new Transaction({
+            recentBlockhash: latestBlockhash.blockhash,
+            feePayer: payer.publicKey
+        })
+
+        tx.add(createSpotOpenOrdersInstruction)
+
+        tx.sign(payer)
+
+        try {
+            const response = await mangoClient.sendSignedTransaction({
+                signedTransaction: tx,
+                signedAtBlock: latestBlockhash
+            })
+
+            console.log('create_open_orders_account::response', response)
+        } catch (error) {
+            console.log('create_open_orders_account::error', error);
+        }
+
+        await mangoAccount.reload(connection, mangoGroup.dexProgramId)
+        // ^ The newly created open orders account isn't immediately visible in
+        // the already fetched Mango account, hence it needs to be reloaded
+
+        console.log('Created open orders account!')
+    }
+
 
     const ws = new WebSocket('ws://api.mngo.cloud:8080')
 
