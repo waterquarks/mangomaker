@@ -4,23 +4,38 @@
 
 This is a very simple market maker for https://trade.mango.markets. It quotes perps and hedges in spot. With thoroughly commented code, it is intended to serve as a hands-on technical introduction to Mango Markets and as a starting point for your own bot.
 
+This bot was written in anticipation to the [SRM trading competitions](https://twitter.com/mangomarkets/status/1545076351509712896).
+
 ## Quickstart
 
 You will need:
 - A Solana account with some SOL deposited to cover transaction fees
 - A Mango account with some collateral deposited
 - Your wallet keypair saved as a JSON file
+- `node` and `yarn`
+
+
+### Preliminary commands
+```shell
+git clone https://github.com/waterquarks/mangomaker && cd mangomaker # Clone this repo
+yarn install # Install dependencies
+```
 
 ### Devnet setup
 
-You'll need to airdrop SOL to your account. First generate a keypair if you haven't already,
-by installing the Solana CLI tools as per https://docs.solana.com/cli/install-solana-cli-tools
-and then generating a keypair using `solana-keygen new`.
+#### Setting up a devnet Solana account
 
-Airdrop some SOL to it using `solana airdrop -v --url devnet 1` - deposit some of it as
-collateral through the UI at https://devnet.mango.markets/
+To get a devnet wallet with SOL, first create generate the wallet by installing the Solana CLI tools as per https://docs.solana.com/cli/install-solana-cli-tools and then generating a keypair using `solana-keygen new --outfile keypair.json`.
 
-Finally execute the example command. You should see the orders quoted by the bot in the UI's orderbook.
+ Now airdrop some SOL to it using `solana airdrop 2 --verbose --url devnet --keypair ./keypair.json`. To And deposit some of it as collateral through the UI at https://devnet.mango.markets.
+
+Finally execute the following commands within the repo:
+
+```shell
+npm install # 
+```
+
+You should see the orders quoted by the bot in the UI's orderbook.
 
 ### Mainnet setup
 
