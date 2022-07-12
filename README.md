@@ -27,15 +27,23 @@ To get a devnet wallet with SOL, first create the wallet by installing the Solan
 
 Import `keypair.json` (you can use `cat keypair.json` to print these from within the shell) into your [Phantom](https://phantom.app) app and switch the network to devnet. Then go to https://devnet.mango.markets and deposit the collateral - video instructions here:
 
-https://user-images.githubusercontent.com/28162761/178407586-806ba98f-4a90-4b99-b2ee-77da51598e17.mp4
+https://user-images.githubusercontent.com/28162761/178409670-89d72297-21c8-4923-9ad9-a65c168f3552.mp4
 
 #### Initializing the market maker
 
-With the 2 previous steps covered, execute the following command, replacing MANGO_ACCOUNT with your own Mango account pubkey - you can fetch it from https://devnet.mango.markets/account, as per the following picture:
+With the 2 previous steps covered, execute the following command:
+
+```shell
+KEYPAIR_PATH=./keypair.json MANGO_GROUP=devnet.2 MANGO_ACCOUNT=YOUR_MANGO_ACCOUNT SYMBOL=SOL npx ts-node app.ts
+```
+
+Replacing YOUR_MANGO_ACCOUNT with your own Mango account pubkey - you can fetch it from https://devnet.mango.markets/account, as per the following picture:
 
 <img width="1512" alt="Screen Shot 2022-07-12 at 04 14 05" src="https://user-images.githubusercontent.com/28162761/178407428-296584d5-6e29-4281-be30-ec3b21c5993c.png">
 
-You should see the orders quoted by the bot in the UI's orderbook.
+You should now see the orders quoted by the bot highlighted in the UI's orderbook.
+
+<img width="1512" alt="Screen Shot 2022-07-12 at 04 45 04" src="https://user-images.githubusercontent.com/28162761/178410506-97231efa-c761-486a-95e7-01506dd9d833.png">
 
 ## Meta learning resources
 
