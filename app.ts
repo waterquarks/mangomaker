@@ -31,17 +31,6 @@ const main = async () => {
         SYMBOL
     } = process.env
 
-    /*
-
-    This is a simple and self-contained market maker. It is intended to serve as quickstart for
-    building your own bot and to familiarize yourself with the technical aspects of Mango Markets.
-
-    - Quotes time in force orders both sides of the book
-    - Listens for fills and hedges accordingly
-    - Limits risk
-
-    */
-
     const config = Config.ids()
 
     const mangoGroupConfig = config.getGroupWithName(MANGO_GROUP || 'devnet.2')
@@ -420,4 +409,3 @@ async function createSpotOrder2Instruction(
 
 
 main()
-
