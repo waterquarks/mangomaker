@@ -43,7 +43,7 @@ Replacing YOUR_MANGO_ACCOUNT with your own Mango account pubkey - you can fetch 
 
 You should now see the orders quoted by the bot highlighted in the UI's orderbook.
 
-<img width="1512" alt="Screen Shot 2022-07-12 at 04 45 04" src="https://user-images.githubusercontent.com/28162761/178410506-97231efa-c761-486a-95e7-01506dd9d833.png">
+![image](https://user-images.githubusercontent.com/28162761/178411043-9b01a883-e56b-4e84-8e0a-2ee2eb0e3597.png)
 
 ## Meta learning resources
 
