@@ -2,7 +2,7 @@
 
 ## About
 
-This is a very simple market maker for https://trade.mango.markets, built in anticipation to the [SRM trading competitions](https://twitter.com/mangomarkets/status/1545076351509712896). It quotes perps and hedges in spot. With thoroughly commented code, it is intended to serve as a hands-on technical introduction to Mango Markets and as a starting point for your own bot.
+This is a very simple market maker for https://trade.mango.markets, built in anticipation to the [SRM trading competitions](https://twitter.com/mangomarkets/status/1545076351509712896). It quotes perps and hedges in spot. With thoroughly descriptive code, it is intended to serve as a hands-on technical introduction to Mango Markets and as a starting point for your own bot.
 
 Happy to help you out with any questions - join the Discord at [discord.gg/mangomarkets](https://discord.gg/mangomarkets) and ask away in #dev-marketmaker.
 
