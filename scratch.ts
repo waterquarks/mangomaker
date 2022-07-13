@@ -1,69 +1,24 @@
-import {
-    Config,
-    getMultipleAccounts,
-    getPerpMarketByBaseSymbol,
-    getSpotMarketByBaseSymbol,
-    getTokenBySymbol, MangoAccount, MangoAccountLayout,
-    MangoClient, PerpAccount, PerpEventLayout, PerpEventQueue, PerpEventQueueLayout, ZERO_BN
-} from "@blockworks-foundation/mango-client";
-import {Connection, Keypair, PublicKey} from "@solana/web3.js";
-import {Market} from "@project-serum/serum";
-import fs from "fs";
-import {BN} from "bn.js";
-import WebSocket from "ws";
+import {Connection} from "@solana/web3.js";
+import {Config} from "@blockworks-foundation/mango-client";
 
-const main = async () => {
-    const {
-        KEYPAIR_PATH,
-        MANGO_GROUP,
-        MANGO_ACCOUNT,
-        SYMBOL
-    } = process.env
-
+async function main() {
     const config = Config.ids()
 
-    const mangoGroupConfig = config.getGroupWithName(MANGO_GROUP || 'devnet.2')
+    const connection = new Connection(config.cluster_urls['mainnet'], 'processed')
 
-    if (!mangoGroupConfig) {
-        console.log(`Couldn't find group by name ${MANGO_GROUP}`)
+    let recentBlockHash, recentBlockTime
 
-        return
-    }
+    connection.onSlotChange(async function (slotInfo) {
+        const { slot, parent, root } = slotInfo
 
-    const [token, perpMarketConfig, spotMarketConfig] = [
-        getTokenBySymbol(mangoGroupConfig, SYMBOL!),
-        getPerpMarketByBaseSymbol(mangoGroupConfig, SYMBOL!),
-        getSpotMarketByBaseSymbol(mangoGroupConfig, SYMBOL!)
-    ]
+        let [recentBlockHash, recentBlockTime] = await Promise.all([
+            connection.getLatestBlockhash('finalized'),
+            connection.getBlockTime(slot)
+        ])
 
-    if (!token || !perpMarketConfig || !spotMarketConfig) {
-        console.log(`token, perpMarketConfig or spotMarketConfig by symbol ${SYMBOL!} not found`)
+        console.log(recentBlockHash, recentBlockTime)
+    })
 
-        return
-    }
-
-    const connection = new Connection(config.cluster_urls[mangoGroupConfig.cluster], 'processed')
-
-    const mangoClient = new MangoClient(connection, mangoGroupConfig.mangoProgramId)
-
-    const mangoGroup = await mangoClient.getMangoGroup(mangoGroupConfig.publicKey)
-
-    const [mangoCache, rootBanks, perpMarket, spotMarket] = await Promise.all([
-        mangoGroup.loadCache(connection),
-        mangoGroup.loadRootBanks(connection),
-        mangoGroup.loadPerpMarket(
-            connection,
-            perpMarketConfig.marketIndex,
-            perpMarketConfig.baseDecimals,
-            perpMarketConfig.quoteDecimals
-        ),
-        Market.load(
-            connection,
-            spotMarketConfig.publicKey,
-            undefined,
-            mangoGroupConfig.serumProgramId
-        )
-    ])
 }
 
 main()

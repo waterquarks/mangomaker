@@ -3,16 +3,20 @@ import {
     getPerpMarketByBaseSymbol,
     getSpotMarketByBaseSymbol,
     getTokenBySymbol,
-    I64_MAX_BN, I80F48,
-    makeCancelAllPerpOrdersInstruction, makeCreateSpotOpenOrdersInstruction,
+    I64_MAX_BN,
+    I80F48,
+    makeCancelAllPerpOrdersInstruction,
+    makeCreateSpotOpenOrdersInstruction,
     makePlacePerpOrder2Instruction,
     makePlaceSpotOrder2Instruction,
-    MangoAccount, MangoAccountLayout,
+    MangoAccount,
+    MangoAccountLayout,
     MangoClient,
     MangoGroup,
     nativeToUi,
-    Payer, PerpEventLayout, PerpEventQueue, PerpEventQueueLayout,
-    QUOTE_INDEX, tokenInfoLayout,
+    Payer,
+    PerpEventLayout,
+    QUOTE_INDEX,
     ZERO_BN
 } from "@blockworks-foundation/mango-client";
 import {Connection, Keypair, PublicKey, Transaction} from "@solana/web3.js";
@@ -20,8 +24,8 @@ import fs from "fs";
 import {BN} from "bn.js";
 import {getFeeRates, getFeeTier, Market, OpenOrders} from "@project-serum/serum";
 import {range, zip} from "lodash";
-import {MangoRiskCheck, ViolationBehaviour} from "mango_risk_check";
 import WebSocket from "ws";
+import {MangoRiskCheck, ViolationBehaviour} from "mango_risk_check";
 
 const main = async () => {
     const {
@@ -54,6 +58,8 @@ const main = async () => {
     }
 
     const connection = new Connection(config.cluster_urls[mangoGroupConfig.cluster], 'processed')
+    // ^ See https://docs.solana.com/developing/clients/jsonrpc-api#configuring-state-commitment
+    // to learn more about each state commitment i.e processed, confirmed and finalized.
 
     const mangoClient = new MangoClient(connection, mangoGroupConfig.mangoProgramId)
 
@@ -76,67 +82,49 @@ const main = async () => {
         )
     ])
 
-    const tokenIndex = mangoGroup.getTokenIndex(token.mintKey)
-
-    // The last updated timestamp for the cached token oracle price is logged
-    // to check whether it hasn't updated in too long of a while
-    let [tokenPrice, tokenPriceLastUpdated] = [
-        mangoGroup.cachePriceToUi(
-            mangoCache.getPrice(tokenIndex), tokenIndex
-        ),
-        new Date()
-    ]
-
-    mangoGroup.onCacheChange(connection, (mangoCache) => {
-        [tokenPrice, tokenPriceLastUpdated] = [
-            mangoGroup.cachePriceToUi(
-                mangoCache.getPrice(tokenIndex), tokenIndex
-            ),
-            new Date()
-        ]
-    })
-
-    // Transactions require a recent blockHash in order to be signed - we poll this
-    // regularly in a separate thread to prevent the extra RPC call slowing down quotes
-    let recentBlockhash = await connection.getLatestBlockhash('finalized')
-
-    let blockHeight = await connection.getSlot('finalized')
-
-    let blockTime = await connection.getBlockTime(blockHeight)
-
-    async function pollRecentBlock() {
-        recentBlockhash = await connection.getLatestBlockhash('finalized')
-
-        blockHeight = await connection.getSlot('finalized')
-
-        blockTime = await connection.getBlockTime(blockHeight)
-    }
-
-    setInterval(pollRecentBlock, 5000)
-
     const payer = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(KEYPAIR_PATH!, 'utf-8'))))
 
     const mangoAccountPk = new PublicKey(MANGO_ACCOUNT!)
 
     const mangoAccount = await mangoClient.getMangoAccount(mangoAccountPk, mangoGroup.dexProgramId)
 
-    const spotMarketIndex = mangoGroup.getSpotMarketIndex(spotMarket.publicKey)
+    let recentBlockHash = await connection.getLatestBlockhash('finalized')
+    // ^ Solana transactions require a recent block hash passed as metadata in order to be signed.
+    // Instead of fetching this before dispatching every transaction (which would delay it by a
+    // few milliseconds) we poll for this regularly in the background.
 
-    if (!mangoAccount.spotOpenOrdersAccounts[spotMarketIndex]) {
+    let recentBlockTime = await connection.getBlockTime(
+        await connection.getSlot('finalized')
+    )
+    // ^ This will be used to as reference for time in force orders later on.
+    // It is important to use cluster time, like above, and not local time.
+
+    connection.onSlotChange(async slotInfo => {
+        recentBlockHash = await connection.getLatestBlockhash('finalized')
+
+        recentBlockTime = await connection.getBlockTime(
+            await connection.getSlot('finalized')
+        )
+    })
+
+    if (!mangoAccount.spotOpenOrdersAccounts[spotMarketConfig.marketIndex]) {
         /*
-        Unlike in perp markets, where orders require only a Mango account, Serum
-        markets supported by Mango require an "open orders" account to serve as
-        an intermediary. One open orders account is needed for each spot market.
+
+        To interact with the (Serum) DEX, a given user must create an OpenOrders
+        account. This account stores the following:
+        - How much of the base and quote currency (in the SOL/USDC pair, SOL
+          would be base currency and USDC would be quote) that user has locked
+          in open orders or is settleable
+        - A list of open orders for that user on that market
+
         */
 
         console.log('Open orders account not found, creating one...')
 
-        const spotMarketIndexBN = new BN(spotMarketIndex)
-
         const [openOrdersPk] = await PublicKey.findProgramAddress(
             [
                 mangoAccount.publicKey.toBytes(),
-                spotMarketIndexBN.toArrayLike(Buffer, 'le', 8),
+                new BN(spotMarketConfig.marketIndex).toArrayLike(Buffer, 'le', 8),
                 new Buffer('OpenOrders', 'utf-8'),
             ],
             mangoClient.programId,
@@ -153,10 +141,8 @@ const main = async () => {
             mangoGroup.signerKey
         )
 
-        const latestBlockhash = await connection.getLatestBlockhash('finalized')
-
         const tx = new Transaction({
-            recentBlockhash: latestBlockhash.blockhash,
+            recentBlockhash: recentBlockHash.blockhash,
             feePayer: payer.publicKey
         })
 
@@ -167,7 +153,7 @@ const main = async () => {
         try {
             const response = await mangoClient.sendSignedTransaction({
                 signedTransaction: tx,
-                signedAtBlock: latestBlockhash
+                signedAtBlock: recentBlockHash
             })
 
             console.log('create_open_orders_account::response', response)
@@ -182,17 +168,63 @@ const main = async () => {
         console.log('Created open orders account!')
     }
 
+    // https://github.com/Is0tope/mango_risk_check/blob/master/js/examples/example.ts
+    const riskChecker = new MangoRiskCheck({
+        connection: connection,
+        // @ts-ignore
+        mangoAccount: mangoAccount,
+        // @ts-ignore
+        mangoClient: mangoClient,
+        // @ts-ignore
+        mangoGroup: mangoGroup,
+        owner: payer
+    })
+
+    try {
+        await riskChecker.initializeRiskAccount(perpMarketConfig)
+    } catch (error) {
+
+    } finally {
+        await Promise.all([
+            riskChecker.setMaxOpenOrders(perpMarketConfig, 2),
+            // @ts-ignore
+            riskChecker.setMaxLongExposure(perpMarketConfig, perpMarket,1),
+            // @ts-ignore
+            riskChecker.setMaxShortExposure(perpMarketConfig, perpMarket, 1),
+            riskChecker.setViolationBehaviour(perpMarketConfig, ViolationBehaviour.CancelIncreasingOrders)
+        ])
+    }
+
+    const tokenIndex = mangoGroup.getTokenIndex(token.mintKey)
+
+    let [tokenPrice, tokenPriceLastUpdated] = [
+        mangoGroup.cachePriceToUi(
+            mangoCache.getPrice(tokenIndex), tokenIndex
+        ),
+        new Date()
+        // ^ The "last updated" timestamp for the cached token oracle price is
+        // logged to check whether it hasn't updated in too long of a while
+    ]
+
+    mangoGroup.onCacheChange(connection, (mangoCache) => {
+        [tokenPrice, tokenPriceLastUpdated] = [
+            mangoGroup.cachePriceToUi(
+                mangoCache.getPrice(tokenIndex), tokenIndex
+            ),
+            new Date()
+        ]
+    })
 
     const ws = new WebSocket('ws://api.mngo.cloud:8080')
 
-    ws.onmessage = (message) => {
+    ws.onmessage = async (message) => {
         const { data } = message
 
         const perpEvent = JSON.parse(data.toString());
 
-        // `events` is received when the connection is first established, containing a snapshot of past fills
-        // `event` is received in subsequent messages, containing one fill at a time
         const isSnapshot = perpEvent.hasOwnProperty('events')
+        // ^ `events` is received when the connection is first established, containing a snapshot of past fills
+        //   `event` is received in subsequent messages, containing one fill at a time
 
         const parseEvent = (event: string) =>
             PerpEventLayout.decode(Buffer.from(event, 'base64'))
@@ -207,57 +239,59 @@ const main = async () => {
 
             const fill = perpMarket.parseFillEvent(event.fill)
 
-
-            if (!(fill.maker.equals(mangoAccount.publicKey))) {
+            if (!(fill.maker.equals(mangoAccountPk))) {
                 return
             }
+
+            const mangoAccount = await mangoClient.getMangoAccount(mangoAccountPk, mangoGroup.dexProgramId)
+
+            const basePosition = mangoAccount.perpAccounts[perpMarketConfig.marketIndex].getBasePositionUi(perpMarket)
+
+            const perpMarketEventQueue = await perpMarket.loadEventQueue(connection)
+
+            const unprocessedBasePosition = perpMarketEventQueue.getUnconsumedEvents()
+                .filter(event => event.fill !== undefined)
+                .map(event => perpMarket.parseFillEvent(event.fill))
+                .filter(fill => fill.maker.equals(mangoAccount.publicKey))
+                .reduce((accumulator, fill) => {
+                    switch (fill.takerSide) {
+                        case "buy":
+                            return accumulator - fill.quantity
+                        case "sell":
+                            return accumulator + fill.quantity
+                    }
+                }, 0)
+
+            const completeBasePosition = basePosition + unprocessedBasePosition
+
+            const tokenDeposit = mangoAccount.getUiDeposit(mangoCache.rootBankCache[tokenIndex], mangoGroup, tokenIndex)
+
+            const openOrdersAccountPk = mangoAccount.spotOpenOrders[spotMarketConfig.marketIndex]
+
+            const openOrdersAccountInfo = await connection.getAccountInfo(openOrdersAccountPk, 'processed')
+
+            const openOrdersAccount = OpenOrders.fromAccountInfo(openOrdersAccountPk, openOrdersAccountInfo!, mangoGroup.dexProgramId)
+
+            const tokenUnsettledBalance = new I80F48(openOrdersAccount.baseTokenFree)
+
+            const tokenSpotBalance = parseFloat(tokenDeposit.add(tokenUnsettledBalance).toString())
+
+            console.table({
+                eventType: 'fill',
+                counterparty: fill.taker.toString(),
+                price: fill.price,
+                quantity: fill.quantity,
+                completeBasePosition,
+                tokenSpotBalance,
+                timestamp: new Date(fill.timestamp.toNumber())
+            })
         }
     }
 
-    connection.onAccountChange(mangoAccountPk, async (accountInfo, context) => {
-        const mangoAccount = new MangoAccount(mangoAccountPk, MangoAccountLayout.decode(accountInfo.data))
-
-        const basePosition = mangoAccount.perpAccounts[perpMarketConfig.marketIndex].getBasePositionUi(perpMarket)
-
-        const perpMarketEventQueue = await perpMarket.loadEventQueue(connection)
-
-        const unprocessedBasePosition = perpMarketEventQueue.events
-            .filter(event => event.fill !== undefined)
-            .map(event => perpMarket.parseFillEvent(event.fill))
-            .filter(fill => fill.maker.equals(mangoAccount.publicKey) && !fill.makerOut)
-            .reduce((accumulator, fill) => {
-                switch (fill.takerSide) {
-                    case "buy":
-                        return accumulator - fill.quantity
-                    case "sell":
-                        return accumulator + fill.quantity
-                }
-            }, 0)
-
-        const completeBasePosition = basePosition + unprocessedBasePosition
-
-        const tokenDeposit = mangoAccount.getUiDeposit(mangoCache.rootBankCache[tokenIndex], mangoGroup, tokenIndex)
-
-        const openOrdersAccountPk = mangoAccount.spotOpenOrders[spotMarketConfig.marketIndex]
-
-        const openOrdersAccountInfo = await connection.getAccountInfo(openOrdersAccountPk, 'processed')
-
-        const openOrdersAccount = OpenOrders.fromAccountInfo(openOrdersAccountPk, openOrdersAccountInfo!, mangoGroup.dexProgramId)
-
-        const tokenUnsettledBalance = new I80F48(openOrdersAccount.baseTokenFree)
-
-        const tokenSpotBalance = parseFloat(tokenDeposit.add(tokenUnsettledBalance).toString())
-
-        console.table([{
-            slot: context.slot,
-            tokenPrice,
-            completeBasePosition,
-            tokenSpotBalance
-        }])
-    }, 'processed')
-
     const quote = async () => {
-        const spread = tokenPrice! * 0.001
+        // const spread = tokenPrice! * 0.0005
+
+        const spread = 0
 
         const [bidPriceUi, bidSizeUi] = [tokenPrice! - spread, 0.01]
 
@@ -268,7 +302,7 @@ const main = async () => {
         const [askPrice, askSize] = perpMarket.uiToNativePriceQuantity(askPriceUi, askSizeUi)
 
         const tx = new Transaction({
-            recentBlockhash: recentBlockhash.blockhash,
+            recentBlockhash: recentBlockHash.blockhash,
             feePayer: payer.publicKey
         })
 
@@ -283,13 +317,13 @@ const main = async () => {
         // as it might drift from actual UNIX time every once and then, effectively
         // being different to what you'd get using Date.now().
 
-        if (blockTime === null) {
+        if (recentBlockTime === null) {
             console.log('Failed to fetch block time')
 
             return
         }
 
-        const expiryTimestamp = new BN(blockTime + 120)
+        const expiryTimestamp = new BN(recentBlockTime + 120)
 
         tx.add(
             makeCancelAllPerpOrdersInstruction(
@@ -345,7 +379,9 @@ const main = async () => {
                 false,
                 undefined,
                 expiryTimestamp
-            )
+            ),
+            // @ts-ignore
+            tx.add(riskChecker.makeCheckRiskInstruction(perpMarketConfig, perpMarket))
         )
 
         tx.sign(payer)
@@ -353,14 +389,16 @@ const main = async () => {
         try {
             const response = await mangoClient.sendSignedTransaction({
                 signedTransaction: tx,
-                signedAtBlock: recentBlockhash,
+                signedAtBlock: recentBlockHash,
             })
+
+            // console.log('quote::response', response)
         } catch (error) {
             console.log('quote::error', error);
         }
     }
 
-    setInterval(quote, 750)
+    setInterval(quote, 1000)
 }
 
 async function createSpotOrder2Instruction(

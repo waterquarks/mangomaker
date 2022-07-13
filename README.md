@@ -45,6 +45,12 @@ You should now see the orders quoted by the bot highlighted in the UI's orderboo
 
 ![image](https://user-images.githubusercontent.com/28162761/178411043-9b01a883-e56b-4e84-8e0a-2ee2eb0e3597.png)
 
+### On mainnet
+
+```shell
+KEYPAIR_PATH=~/.config/solana/id.json MANGO_GROUP=mainnet.1 MANGO_ACCOUNT=YOUR_MANGO_ACCOUNT SYMBOL=SOL npx ts-node app.ts
+```
+
 ## Meta learning resources
 
 - [Technical introduction to the Serum DEX](https://docs.google.com/document/d/1isGJES4jzQutI0GtQGuqtrBUqeHxl_xJNXdtOv4SdII):
