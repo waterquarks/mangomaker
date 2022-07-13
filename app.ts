@@ -10,7 +10,6 @@ import {
     makePlacePerpOrder2Instruction,
     makePlaceSpotOrder2Instruction,
     MangoAccount,
-    MangoAccountLayout,
     MangoClient,
     MangoGroup,
     nativeToUi,
@@ -276,6 +275,47 @@ const main = async () => {
 
             const tokenSpotBalance = parseFloat(tokenDeposit.add(tokenUnsettledBalance).toString())
 
+            const { takerSide, price, quantity } = fill
+
+            // @ts-ignore
+            const counterside = { buy: 'sell', sell: 'buy' }[takerSide]
+
+            console.log(`Got ${takerSide} hit for ${quantity} @ $${price}, hedging on ${counterside}...`)
+
+            const tx = new Transaction({
+                recentBlockhash: recentBlockHash.blockhash,
+                feePayer: payer.publicKey
+            })
+
+            const instruction = await createSpotOrder2Instruction(
+                mangoClient,
+                mangoGroup,
+                mangoAccount,
+                spotMarket,
+                payer,
+                counterside,
+                price,
+                quantity,
+                'ioc',
+                undefined,
+                true
+            )
+
+            tx.add(instruction!)
+
+            tx.sign(payer)
+
+            try {
+                const response = await mangoClient.sendSignedTransaction({
+                    signedTransaction: tx,
+                    signedAtBlock: recentBlockHash,
+                });
+
+                console.log('hedge::response', response);
+            } catch (error) {
+                console.log('hedge::error', error);
+            }
+
             console.table({
                 eventType: 'fill',
                 counterparty: fill.taker.toString(),
@@ -293,9 +333,9 @@ const main = async () => {
 
         const spread = 0
 
-        const [bidPriceUi, bidSizeUi] = [tokenPrice! - spread, 0.01]
+        const [bidPriceUi, bidSizeUi] = [tokenPrice! - spread, 0.1]
 
-        const [askPriceUi, askSizeUi] = [tokenPrice! + spread, 0.01]
+        const [askPriceUi, askSizeUi] = [tokenPrice! + spread, 0.1]
 
         const [bidPrice, bidSize] = perpMarket.uiToNativePriceQuantity(bidPriceUi, bidSizeUi)
 
@@ -392,7 +432,7 @@ const main = async () => {
                 signedAtBlock: recentBlockHash,
             })
 
-            // console.log('quote::response', response)
+            console.log('quote::response', response)
         } catch (error) {
             console.log('quote::error', error);
         }
