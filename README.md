@@ -47,8 +47,10 @@ You should now see the orders quoted by the bot highlighted in the UI's orderboo
 
 ### On mainnet
 
+Assuming you've got a Mango account with some collateral and your keypair stored in a JSON file (see the devnet quickstart for reference):
+
 ```shell
-KEYPAIR_PATH=~/.config/solana/id.json MANGO_GROUP=mainnet.1 MANGO_ACCOUNT=YOUR_MANGO_ACCOUNT SYMBOL=SOL npx ts-node app.ts
+KEYPAIR_PATH=PATH_TO_YOUR_KEYPAIR MANGO_GROUP=mainnet.1 MANGO_ACCOUNT=YOUR_MANGO_ACCOUNT SYMBOL=SOL npx ts-node app.ts
 ```
 
 ## Meta learning resources
