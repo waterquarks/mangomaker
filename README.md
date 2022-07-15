@@ -34,7 +34,7 @@ https://user-images.githubusercontent.com/28162761/178409670-89d72297-21c8-4923-
 With the 2 previous steps covered, execute the following command:
 
 ```shell
-KEYPAIR_PATH=./keypair.json MANGO_GROUP=devnet.2 MANGO_ACCOUNT=YOUR_MANGO_ACCOUNT SYMBOL=SOL npx ts-node app.ts
+KEYPAIR=./keypair.json MANGO_GROUP=devnet.2 MANGO_ACCOUNT=YOUR_MANGO_ACCOUNT SYMBOL=SOL npx ts-node app.ts
 ```
 
 Replacing YOUR_MANGO_ACCOUNT with your own Mango account pubkey - you can fetch it from https://devnet.mango.markets/account, as per the following picture:
@@ -50,7 +50,7 @@ You should now see the orders quoted by the bot highlighted in the UI's orderboo
 Assuming you've got a Mango account with some collateral and your keypair stored in a JSON file (see the devnet quickstart for reference):
 
 ```shell
-KEYPAIR_PATH=PATH_TO_YOUR_KEYPAIR MANGO_GROUP=mainnet.1 MANGO_ACCOUNT=YOUR_MANGO_ACCOUNT SYMBOL=SOL npx ts-node app.ts
+KEYPAIR=PATH_TO_YOUR_KEYPAIR MANGO_GROUP=mainnet.1 MANGO_ACCOUNT=YOUR_MANGO_ACCOUNT SYMBOL=SOL npx ts-node app.ts
 ```
 
 ## Meta learning resources

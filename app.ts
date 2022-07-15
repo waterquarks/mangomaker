@@ -1,34 +1,37 @@
 import {
     Config,
+    getMultipleAccounts,
     getPerpMarketByBaseSymbol,
     getSpotMarketByBaseSymbol,
     getTokenBySymbol,
     I64_MAX_BN,
-    I80F48,
     makeCancelAllPerpOrdersInstruction,
     makeCreateSpotOpenOrdersInstruction,
     makePlacePerpOrder2Instruction,
     makePlaceSpotOrder2Instruction,
     MangoAccount,
+    MangoAccountLayout,
     MangoClient,
     MangoGroup,
     nativeToUi,
     Payer,
     PerpEventLayout,
-    QUOTE_INDEX,
+    PerpEventQueue,
+    PerpEventQueueLayout,
+    QUOTE_INDEX, sleep,
     ZERO_BN
 } from "@blockworks-foundation/mango-client";
 import {Connection, Keypair, PublicKey, Transaction} from "@solana/web3.js";
 import fs from "fs";
 import {BN} from "bn.js";
-import {getFeeRates, getFeeTier, Market, OpenOrders} from "@project-serum/serum";
-import {range, zip} from "lodash";
+import {getFeeRates, getFeeTier, Market} from "@project-serum/serum";
+import {parseInt, range, zip} from "lodash";
 import WebSocket from "ws";
 import {MangoRiskCheck, ViolationBehaviour} from "mango_risk_check";
 
 const main = async () => {
     const {
-        KEYPAIR_PATH,
+        KEYPAIR,
         MANGO_GROUP,
         MANGO_ACCOUNT,
         SYMBOL
@@ -56,13 +59,19 @@ const main = async () => {
         return
     }
 
-    const connection = new Connection(config.cluster_urls[mangoGroupConfig.cluster], 'processed')
+    const connection = new Connection('https://chi5.rpcpool.com/6b328b0057ca724f7a73282c2a90', 'processed')
     // ^ See https://docs.solana.com/developing/clients/jsonrpc-api#configuring-state-commitment
     // to learn more about each state commitment i.e processed, confirmed and finalized.
 
     const mangoClient = new MangoClient(connection, mangoGroupConfig.mangoProgramId)
 
+    console.log('Loading Mango group...')
+
     const mangoGroup = await mangoClient.getMangoGroup(mangoGroupConfig.publicKey)
+
+    console.log(`Loaded! ${(performance.now() / 1e3).toFixed(2)}s` )
+
+    console.log('Loading mangoCache, rootBanks, perpMarket and spotMarket...')
 
     const [mangoCache, rootBanks, perpMarket, spotMarket] = await Promise.all([
         mangoGroup.loadCache(connection),
@@ -81,9 +90,13 @@ const main = async () => {
         )
     ])
 
-    const payer = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(KEYPAIR_PATH!, 'utf-8'))))
+    console.log(`Loaded! ${(performance.now() / 1e3).toFixed(2)}s` )
+
+    const payer = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(KEYPAIR!, 'utf-8'))))
 
     const mangoAccountPk = new PublicKey(MANGO_ACCOUNT!)
+
+    console.log('Loading meta...')
 
     const mangoAccount = await mangoClient.getMangoAccount(mangoAccountPk, mangoGroup.dexProgramId)
 
@@ -95,10 +108,14 @@ const main = async () => {
     let recentBlockTime = await connection.getBlockTime(
         await connection.getSlot('finalized')
     )
+
+    console.log(`Loaded! ${(performance.now() / 1e3).toFixed(2)}s` )
     // ^ This will be used to as reference for time in force orders later on.
     // It is important to use cluster time, like above, and not local time.
 
     connection.onSlotChange(async slotInfo => {
+        console.table([slotInfo])
+
         recentBlockHash = await connection.getLatestBlockhash('finalized')
 
         recentBlockTime = await connection.getBlockTime(
@@ -167,32 +184,37 @@ const main = async () => {
         console.log('Created open orders account!')
     }
 
-    // https://github.com/Is0tope/mango_risk_check/blob/master/js/examples/example.ts
-    const riskChecker = new MangoRiskCheck({
-        connection: connection,
-        // @ts-ignore
-        mangoAccount: mangoAccount,
-        // @ts-ignore
-        mangoClient: mangoClient,
-        // @ts-ignore
-        mangoGroup: mangoGroup,
-        owner: payer
-    })
-
-    try {
-        await riskChecker.initializeRiskAccount(perpMarketConfig)
-    } catch (error) {
-
-    } finally {
-        await Promise.all([
-            riskChecker.setMaxOpenOrders(perpMarketConfig, 2),
-            // @ts-ignore
-            riskChecker.setMaxLongExposure(perpMarketConfig, perpMarket,1),
-            // @ts-ignore
-            riskChecker.setMaxShortExposure(perpMarketConfig, perpMarket, 1),
-            riskChecker.setViolationBehaviour(perpMarketConfig, ViolationBehaviour.CancelIncreasingOrders)
-        ])
-    }
+    // console.log('Loading risk checker...')
+    //
+    // // https://github.com/Is0tope/mango_risk_check/blob/master/js/examples/example.ts
+    // const riskChecker = new MangoRiskCheck({
+    //     connection: connection,
+    //     // @ts-ignore
+    //     mangoAccount: mangoAccount,
+    //     // @ts-ignore
+    //     mangoClient: mangoClient,
+    //     // @ts-ignore
+    //     mangoGroup: mangoGroup,
+    //     owner: payer
+    // })
+    //
+    // try {
+    //     await riskChecker.initializeRiskAccount(perpMarketConfig)
+    // } catch (error) {
+    //     // @ts-ignore
+    //     console.log(Object.entries(error))
+    // } finally {
+    //     await Promise.all([
+    //         riskChecker.setMaxOpenOrders(perpMarketConfig, 2),
+    //         // @ts-ignore
+    //         riskChecker.setMaxLongExposure(perpMarketConfig, perpMarket,1000),
+    //         // @ts-ignore
+    //         riskChecker.setMaxShortExposure(perpMarketConfig, perpMarket, 1000),
+    //         riskChecker.setViolationBehaviour(perpMarketConfig, ViolationBehaviour.CancelIncreasingOrders)
+    //     ])
+    // }
+    //
+    // console.log('Loaded!')
 
     const tokenIndex = mangoGroup.getTokenIndex(token.mintKey)
 
@@ -231,7 +253,6 @@ const main = async () => {
         if (isSnapshot) {
             for (const event of perpEvent.events.map(parseEvent)) {
                 const fill = perpMarket.parseFillEvent(event.fill)
-
             }
         } else {
             const event = parseEvent(perpEvent.event)
@@ -242,89 +263,139 @@ const main = async () => {
                 return
             }
 
-            const mangoAccount = await mangoClient.getMangoAccount(mangoAccountPk, mangoGroup.dexProgramId)
-
-            const basePosition = mangoAccount.perpAccounts[perpMarketConfig.marketIndex].getBasePositionUi(perpMarket)
-
-            const perpMarketEventQueue = await perpMarket.loadEventQueue(connection)
-
-            const unprocessedBasePosition = perpMarketEventQueue.getUnconsumedEvents()
-                .filter(event => event.fill !== undefined)
-                .map(event => perpMarket.parseFillEvent(event.fill))
-                .filter(fill => fill.maker.equals(mangoAccount.publicKey))
-                .reduce((accumulator, fill) => {
-                    switch (fill.takerSide) {
-                        case "buy":
-                            return accumulator - fill.quantity
-                        case "sell":
-                            return accumulator + fill.quantity
-                    }
-                }, 0)
-
-            const completeBasePosition = basePosition + unprocessedBasePosition
-
-            const tokenDeposit = mangoAccount.getUiDeposit(mangoCache.rootBankCache[tokenIndex], mangoGroup, tokenIndex)
-
-            const openOrdersAccountPk = mangoAccount.spotOpenOrders[spotMarketConfig.marketIndex]
-
-            const openOrdersAccountInfo = await connection.getAccountInfo(openOrdersAccountPk, 'processed')
-
-            const openOrdersAccount = OpenOrders.fromAccountInfo(openOrdersAccountPk, openOrdersAccountInfo!, mangoGroup.dexProgramId)
-
-            const tokenUnsettledBalance = new I80F48(openOrdersAccount.baseTokenFree)
-
-            const tokenSpotBalance = parseFloat(tokenDeposit.add(tokenUnsettledBalance).toString())
-
-            const { takerSide, price, quantity } = fill
-
-            // @ts-ignore
-            const counterside = { buy: 'sell', sell: 'buy' }[takerSide]
-
-            console.log(`Got ${takerSide} hit for ${quantity} @ $${price}, hedging on ${counterside}...`)
-
-            const tx = new Transaction({
-                recentBlockhash: recentBlockHash.blockhash,
-                feePayer: payer.publicKey
-            })
-
-            const instruction = await createSpotOrder2Instruction(
-                mangoClient,
-                mangoGroup,
-                mangoAccount,
-                spotMarket,
-                payer,
-                counterside,
-                price,
-                quantity,
-                'ioc',
-                undefined,
-                true
+            const [mangoAccountRaw, perpEventQueueRaw] = await getMultipleAccounts(
+                connection,
+                [mangoAccountPk, perpMarketConfig.eventsKey]
             )
 
-            tx.add(instruction!)
+            const [mangoAccount, perpEventQueue] = [
+                new MangoAccount(mangoAccountPk, MangoAccountLayout.decode(mangoAccountRaw.accountInfo.data)),
+                new PerpEventQueue(PerpEventQueueLayout.decode(perpEventQueueRaw.accountInfo.data))
+            ]
 
-            tx.sign(payer)
+            const basePosition = mangoAccount.perpAccounts[perpMarketConfig.marketIndex].basePosition
 
-            try {
-                const response = await mangoClient.sendSignedTransaction({
-                    signedTransaction: tx,
-                    signedAtBlock: recentBlockHash,
-                });
+            const takerBase = mangoAccount.perpAccounts[perpMarketConfig.marketIndex].takerBase
 
-                console.log('hedge::response', response);
-            } catch (error) {
-                console.log('hedge::error', error);
-            }
+            const unprocessedFills = perpEventQueue.getUnconsumedEvents()
+                .filter(event => event.fill !== undefined)
+                .map(event => event.fill)
+
+            const unprocessedBasePosition = unprocessedFills
+                // @ts-ignore
+                .filter(fill => fill.maker.equals(mangoAccount.publicKey))
+                .reduce((accumulator, fill) => {
+                // @ts-ignore
+                    switch (fill.takerSide) {
+                        case "buy":
+                // @ts-ignore
+                            return accumulator.sub(fill.quantity)
+                        case "sell":
+                // @ts-ignore
+                            return accumulator.add(fill.quantity)
+                    }
+                }, basePosition.add(takerBase))
+
+            // @ts-ignore
+            const dump = (fill) =>
+                Object.fromEntries(
+                    Object.entries(fill).map(([key, value]) => {
+                        if (['timestamp', 'makerTimestamp'].includes(key)) {
+                            // @ts-ignore
+                            return [key, (new Date(value.toNumber() * 1000)).toISOString()]
+                        } else {
+                            // @ts-ignore
+                            return [key, value.toString()]
+                        }
+                    })
+                )
+
+
+            console.log(JSON.stringify(unprocessedFills.map(dump)))
+
+            console.table(dump(fill))
 
             console.table({
-                eventType: 'fill',
-                counterparty: fill.taker.toString(),
-                price: fill.price,
-                quantity: fill.quantity,
-                completeBasePosition,
-                tokenSpotBalance,
-                timestamp: new Date(fill.timestamp.toNumber())
+                basePosition: perpMarket.baseLotsToNumber(basePosition),
+                takerBase: perpMarket.baseLotsToNumber(takerBase),
+                unprocessedBasePosition: perpMarket.baseLotsToNumber(unprocessedBasePosition),
+                perpEventQueueHead: perpEventQueue.head.toNumber(),
+                perpEventQueueCount: perpEventQueue.count.toNumber(),
+                perpEventQueueSeqNum: perpEventQueue.seqNum.toNumber(),
+                perpEventQueueSlot: perpEventQueueRaw.context.slot,
+                mangoAccountSlot: mangoAccountRaw.context.slot,
+                perpEventSlot: perpEvent.slot,
+                writeVersion: perpEvent.write_version,
+                perpEventMarket: perpEvent.market
             })
+
+            // const completeBasePosition = basePosition + unprocessedBasePosition
+
+            // const tokenDeposit = mangoAccount.getUiDeposit(mangoCache.rootBankCache[tokenIndex], mangoGroup, tokenIndex)
+
+            // const openOrdersAccountPk = mangoAccount.spotOpenOrders[spotMarketConfig.marketIndex]
+
+            // const openOrdersAccountInfo = await connection.getAccountInfo(openOrdersAccountPk, 'processed')
+
+            // const openOrdersAccount = OpenOrders.fromAccountInfo(openOrdersAccountPk, openOrdersAccountInfo!, mangoGroup.dexProgramId)
+
+            // const tokenUnsettledBalance = new I80F48(openOrdersAccount.baseTokenFree)
+
+            // const tokenSpotBalance = parseFloat(tokenDeposit.add(tokenUnsettledBalance).toString())
+
+            // const { takerSide, price, quantity } = fill
+
+            // // @ts-ignore
+            // const makerSide = { buy: 'sell', sell: 'buy' }[takerSide]
+            //
+            // console.log(`Got ${makerSide} hit for ${quantity} @ $${price}, hedging on ${takerSide}...`)
+            //
+            // const tx = new Transaction({
+            //     recentBlockhash: recentBlockHash.blockhash,
+            //     feePayer: payer.publicKey
+            // })
+            //
+            // const instruction = await createSpotOrder2Instruction(
+            //     mangoClient,
+            //     mangoGroup,
+            //     mangoAccount,
+            //     spotMarket,
+            //     payer,
+            //     takerSide,
+            //     price,
+            //     quantity,
+            //     'ioc',
+            //     undefined,
+            //     true
+            // )
+            //
+            // tx.add(instruction!)
+            //
+            // tx.sign(payer)
+            //
+            // try {
+            //     const response = await mangoClient.sendSignedTransaction({
+            //         signedTransaction: tx,
+            //         signedAtBlock: recentBlockHash,
+            //     });
+            //
+            //     console.log('hedge::response', response);
+            // } catch (error) {
+            //     console.log('hedge::error', error);
+            // }
+
+            // console.table({
+            //     eventType: 'fill',
+            //     counterparty: fill.taker.toString(),
+            //     side: fill.takerSide,
+            //     price: fill.price,
+            //     quantity: fill.quantity,
+            //     // basePosition,
+            //     // unprocessedBasePosition,
+            //     // completeBasePosition,
+            //     // tokenSpotBalance,
+            //     timestamp: new Date(fill.timestamp.toString())
+            // })
         }
     }
 
@@ -333,9 +404,9 @@ const main = async () => {
 
         const spread = 0
 
-        const [bidPriceUi, bidSizeUi] = [tokenPrice! - spread, 0.1]
+        const [bidPriceUi, bidSizeUi] = [tokenPrice! - spread, 5]
 
-        const [askPriceUi, askSizeUi] = [tokenPrice! + spread, 0.1]
+        const [askPriceUi, askSizeUi] = [tokenPrice! + spread, 5]
 
         const [bidPrice, bidSize] = perpMarket.uiToNativePriceQuantity(bidPriceUi, bidSizeUi)
 
@@ -421,7 +492,7 @@ const main = async () => {
                 expiryTimestamp
             ),
             // @ts-ignore
-            tx.add(riskChecker.makeCheckRiskInstruction(perpMarketConfig, perpMarket))
+            // tx.add(riskChecker.makeCheckRiskInstruction(perpMarketConfig, perpMarket))
         )
 
         tx.sign(payer)
@@ -438,7 +509,11 @@ const main = async () => {
         }
     }
 
-    setInterval(quote, 1000)
+    console.log('First quoting in ' + (performance.now() / 1e3).toFixed(2) + 's!')
+
+    quote()
+
+    setInterval(quote, 1500)
 }
 
 async function createSpotOrder2Instruction(
