@@ -29,6 +29,14 @@ import {parseInt, range, zip} from "lodash";
 import WebSocket from "ws";
 import {MangoRiskCheck, ViolationBehaviour} from "mango_risk_check";
 
+// Load settings from .env
+import dotenv from "dotenv";
+dotenv.config();
+const rpcEndpoint = process.env.RPC_ENDPOINT || 'https://chi5.rpcpool.com/6b328b0057ca724f7a73282c2a90';
+const wsEndpoint = process.env.WS_ENDPOINT || 'ws://api.mngo.cloud:8080';
+const envAskSize = Number(process.env.ASK_SIZE) || 1;
+const envBidSize = Number(process.env.BID_SIZE) || 1;
+
 const main = async () => {
     const {
         KEYPAIR,
@@ -59,7 +67,7 @@ const main = async () => {
         return
     }
 
-    const connection = new Connection('https://chi5.rpcpool.com/6b328b0057ca724f7a73282c2a90', 'processed')
+    const connection = new Connection(rpcEndpoint, 'processed');
     // ^ See https://docs.solana.com/developing/clients/jsonrpc-api#configuring-state-commitment
     // to learn more about each state commitment i.e processed, confirmed and finalized.
 
@@ -236,7 +244,7 @@ const main = async () => {
         ]
     })
 
-    const ws = new WebSocket('ws://api.mngo.cloud:8080')
+    const ws = new WebSocket(wsEndpoint);
 
     ws.onmessage = async (message) => {
         const { data } = message
@@ -404,9 +412,9 @@ const main = async () => {
 
         const spread = 0
 
-        const [bidPriceUi, bidSizeUi] = [tokenPrice! - spread, 5]
+        const [bidPriceUi, bidSizeUi] = [tokenPrice! - spread, envBidSize]
 
-        const [askPriceUi, askSizeUi] = [tokenPrice! + spread, 5]
+        const [askPriceUi, askSizeUi] = [tokenPrice! + spread, envAskSize]
 
         const [bidPrice, bidSize] = perpMarket.uiToNativePriceQuantity(bidPriceUi, bidSizeUi)
 
@@ -640,6 +648,5 @@ async function createSpotOrder2Instruction(
 
     return placeOrderInstruction
 }
-
 
 main()

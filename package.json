@@ -8,6 +8,7 @@
     "@project-serum/serum": "^0.13.65",
     "@types/bn.js": "^5.1.0",
     "bn.js": "^5.2.1",
+    "dotenv": "^16.0.2",
     "lodash": "^4.17.21",
     "mango_risk_check": "^1.2.1",
     "sqlite": "^4.1.1",
