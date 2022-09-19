@@ -15,6 +15,10 @@ git clone https://github.com/waterquarks/mangomaker && cd mangomaker # Clone thi
 yarn install # Install dependencies
 ```
 
+Then run `cp .env.sample .env` to copy the .env.sample file to .env. After
+copying, edit the values in .env as required. See the notes inside the file for
+more details.
+
 ### On devnet
 
 #### Setting up a Solana account

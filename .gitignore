@@ -4,3 +4,4 @@ node_modules
 .idea
 keypair.json
 .venv
+.env
